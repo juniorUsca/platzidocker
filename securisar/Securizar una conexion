@@ -1,0 +1,95 @@
+Securizar una conexion
+
+1. Crear una autoridad de certificacion (CA)
+  a. Es necesario una clave privada y un certificado
+
+  openssl genrsa -aes256 -out ca-key.pem 2048
+  openssl req -new -x509 -days 365 -key ca-key.pem -sha256 -out ca.pem
+
+2. Configurar la clave privada del servidor.
+
+  openssl genrsa -out server-key.pem 2048
+
+3. Crear un requerimiento de firma (CSR) de certificado para el servidor
+
+  openssl req -subj "//CN=localhost" -new -key server-key.pem -out server.csr
+
+4. Firmar la clave del servidor con el CSR mediante nuestra CA
+
+  echo -e "subjectAltName = @alt_names\n[alt_names]\nIP.1 = 192.168.56.10\nIP.2 = 127.0.0.1" > extfile.cnf
+  openssl x509 -req -days 365 -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server-cert.pem -extfile extfile.cnf
+
+5. Crear una clave privada y un CSR para el cliente
+
+  openssl genrsa -out client-key.pem 2048
+  openssl req -subj "//CN=client" -new -key client-key.pem -out client.csr
+
+6. Firmar la clave del cliente con el CSR mediante nuestro CA
+
+  echo "extendedKeyUsage = clientAuth" > extfile.cnf
+  openssl x509 -req -days 365 -in client.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out client-cert.pem -extfile extfile.cnf
+
+7. Iniciar el demonio de docker con la opcion de TLS y especificar la ubicacion de la calve privada del CA, el certificado del servidor y la clave privada del servidor.
+
+  DOCKER_OPTS="-H tcp://0.0.0.0:2375 -- tlsverify --tlscacert=/etc/docker/ca.pem --tlscert=/etc/docker/server-cert.pem --tlskey=/etc/docker/server-key.pem"
+
+
+8. Configurar el cliente de docker para que utilice la clave privada del cliente y la clave privada del CA
+
+  docker --tlsverify --tlscacert=ca.pem --tlscert=client-cert.pem --tlskey=client-key.pem -H tcp://192.168.56.10:2375 ps
+
+CONFIGURAR DAEMON
+
+Verificar configuracion de SYSTEMD con docker
+  systemctl status docker
+
+Ver loaded
+  Loaded: loaded (/lib/systemd/system/docker.service; enabled; vendor preset: enabled)
+
+Editar el servicio
+  vim /lib/systemd/system/docker.service
+
+Debajo de [Service] agregar o modificar
+  EnvironmentFile=-/etc/default/docker
+  ExecStart=/usr/bin/dockerd $OPTIONS -H fd://
+
+Editar el archivo de entorno de docker
+  vim /etc/default/docker
+
+Agregar opciones
+  OPTIONS="--LOG-LEVEL=DEBUG"
+
+Detener docker con SYSTEMD
+  systemctl stop docker
+
+Reinicar docker con SYSTEMD
+  systemctl restart docker
+
+Ver logs de docker
+  journalctl -u docker
+
+
+
+
+TIPS
+
+En el cliente mover a ~/.docker client-cert.pem client-key.pem y ca.pem
+
+  cp client-cert.pem client-key.pem ca.pem ~/.docker
+
+Renombrar
+
+  mv client-cert.pem cert.pem
+  mv client-key.pem key.pem
+
+Ahora conectar
+
+  docker --tlsverify -H tcp://192.168.56.10:2375 ps
+
+Exportar variables de entorno
+
+  export DOCKER_HOST="tcp://192.168.56.10:2375"
+  export DOCKER_TLS_VERIFY=1
+
+Probar
+  docker ps
